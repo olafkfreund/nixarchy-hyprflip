@@ -116,6 +116,16 @@ Tracked as olafkfreund/nixarchy-hyprflip#3, on branch
   size, which is one pane. `toggle()` restores the card's previous box with
   `setTargetGeom` when the card becomes floating.
 
+- **hy3 build shape (step 7):** the port patch touches five hy3 files, so
+  `prepare-source.py` now builds a complete patched copy of hy3 in the build
+  directory. It copies the pinned tree, applies `hyprland-main.patch` with
+  `patch -p1`, then applies the lifetime edits in place, and `add_subdirectory`
+  builds that copy. The header-only swap of two files is gone. The revision
+  check on the pristine source is unchanged. `scripts/build-containers` fetches
+  the untagged commit directly.
+- **Bridge:** `Bridge.cpp` needed the same accessor and workspace-creation
+  mappings as the core. The bridge ABI and exported symbol are unchanged.
+
 ## Steps
 
 1. **`CMakeLists.txt`:** use the bare `hyprland` module and add the commit check.
