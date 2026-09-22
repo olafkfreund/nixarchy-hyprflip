@@ -150,6 +150,54 @@ part of the recorded desktop validation. The first-time container procedure
 below uses the supplied installer and its documented library paths. A stock hy3
 installation through hyprpm does not contain Hyprflip's bridge.
 
+## NixOS flake
+
+The flake builds the core and, optionally, the patched hy3 provider **against
+the Hyprland package you already run**. That package must be Hyprland 0.56.2;
+any other version fails at build time instead of being rejected at load time.
+
+```nix
+# flake.nix
+inputs.hyprflip.url = "github:olafkfreund/nixarchy-hyprflip";
+```
+
+With Home Manager managing Hyprland, the module adds both libraries to
+`wayland.windowManager.hyprland.plugins`, which loads them in order:
+
+```nix
+imports = [ inputs.hyprflip.homeManagerModules.default ];
+programs.hyprflip = {
+  enable = true;
+  containers.enable = true; # optional hy3 provider
+};
+```
+
+It builds against `wayland.windowManager.hyprland.package`, or the NixOS
+`programs.hyprland.package` when that is `null`. Override with
+`programs.hyprflip.hyprlandPackage`.
+
+Without Home Manager, the NixOS module places the libraries at stable paths and
+leaves your configuration alone:
+
+```nix
+imports = [ inputs.hyprflip.nixosModules.default ];
+programs.hyprflip.enable = true;
+programs.hyprflip.containers.enable = true; # optional
+```
+
+```lua
+hl.plugin.load("/etc/hyprflip/hyprflip.so")
+hl.plugin.load("/etc/hyprflip/libhy3.so") -- only with containers
+```
+
+`overlays.default` adds `hyprflip` and `hy3-hyprflip` built against
+`pkgs.hyprland`. `packages.<system>` are built against the flake's pinned
+Hyprland 0.56.2 and are meant for testing.
+
+Neither module writes settings or bindings. Take them from
+[examples/hyprflip.lua](../examples/hyprflip.lua), **omitting its
+`hl.plugin.load(...)` line**. Use one installation method for the core.
+
 ## Manual core loading
 
 For custom configuration layouts:

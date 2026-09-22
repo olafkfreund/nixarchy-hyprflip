@@ -77,6 +77,24 @@ development-environment task.
 - **Out of scope:** the Python helpers, OmaCards, Omarchy menus, and any
   change to the host desktop.
 
+## Deviations during implementation
+
+- **hy3 inputs:** hy3's upstream `default.nix` also needs `pango` and `cairo`
+  in `buildInputs`. `nix/hy3.nix` adds them.
+- **Home Manager default Hyprland:** `wayland.windowManager.hyprland.package`
+  is nullable, and Home Manager recommends `null` when NixOS installs
+  Hyprland. The Home Manager module's `hyprlandPackage` therefore falls back to
+  `osConfig.programs.hyprland.package`, and an assertion fails when there is
+  neither.
+- **`.gitignore`:** adds `/result*` so `nix build` output links stay untracked.
+  It also adds the four devenv lines from the #1 branch (`/.devenv/`,
+  `/.direnv/`, `/devenv.local.nix`, `/devenv.local.yaml`) so the formatter
+  skips generated devenv files. Merging with #1 needs a trivial `.gitignore`
+  resolution.
+- **Formatter:** `nixfmt-tree` (from the pinned nixpkgs) instead of
+  `nixfmt-rfc-style`. Passing directories to plain nixfmt is deprecated, and
+  `nixfmt-tree` lets a bare `nix fmt` format the whole repository.
+
 ## Steps
 
 1. **`CMakeLists.txt`:** apply the Lua 5.5 hunk.

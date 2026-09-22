@@ -3,8 +3,14 @@ project(hyprflip_hy3_bridge LANGUAGES CXX)
 if(NOT HY3_SOURCE_DIR)
   message(FATAL_ERROR "Pass -DHY3_SOURCE_DIR pointing to the pinned hy3 checkout")
 endif()
-execute_process(COMMAND git -C "${HY3_SOURCE_DIR}" rev-parse HEAD
-  OUTPUT_VARIABLE HY3_REV OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+# Sources fetched without .git (e.g. by Nix, pinned by hash) pass the revision.
+set(HY3_SOURCE_REV "" CACHE STRING "Revision of HY3_SOURCE_DIR when it has no .git")
+if(HY3_SOURCE_REV)
+  set(HY3_REV "${HY3_SOURCE_REV}")
+else()
+  execute_process(COMMAND git -C "${HY3_SOURCE_DIR}" rev-parse HEAD
+    OUTPUT_VARIABLE HY3_REV OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+endif()
 if(NOT HY3_REV STREQUAL "42b7ed8fd9aefd3f36e5f617afd5071245c67853")
   message(FATAL_ERROR "This experimental bridge requires hy3 hl0.56.0.1 (42b7ed8)")
 endif()
