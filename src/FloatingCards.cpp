@@ -6,11 +6,17 @@
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Group.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowEffectsController.hpp>
+#include <hyprland/src/desktop/view/window/WindowGroupMembership.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
 #include <hyprland/src/layout/target/Target.hpp>
 #include <hyprland/src/layout/target/WindowGroupTarget.hpp>
+#include <hyprland/src/layout/target/WindowTarget.hpp>
+#include <hyprland/src/state/workspace/State.hpp>
+#include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -29,7 +35,7 @@ std::map<uint64_t, std::shared_ptr<Card>> cards;
 uint64_t nextID = 1;
 PHLWINDOW resolve(uintptr_t address) {
     for (const auto &w : Desktop::windowState()->windows())
-        if (reinterpret_cast<uintptr_t>(w.get()) == address && w->m_isMapped)
+        if (reinterpret_cast<uintptr_t>(w.get()) == address && w->mapped())
             return w;
     return nullptr;
 }
@@ -40,61 +46,27 @@ double gap() {
     return std::max<int64_t>(0, std::max(g->m_left + g->m_right, g->m_top + g->m_bottom));
 }
 
-// Only the core-owned CGroup target enters a layout. This adapter turns its
-// outer geometry into a pane rectangle, then delegates to the original target.
-// Retaining the original is essential: restore it before ungrouping/unloading.
-class PaneTarget final : public ITarget {
-  public:
-    SP<ITarget> original;
-    std::weak_ptr<Card> card;
-    static SP<PaneTarget> create(SP<ITarget> original, const std::shared_ptr<Card> &card) {
-        auto p = makeShared<PaneTarget>();
-        p->original = original;
-        p->card = card;
-        p->m_self = p;
-        p->m_space = original->space();
-        p->m_ghostSpace = true;
-        return p;
-    }
-    eTargetType type() override { return TARGET_TYPE_WINDOW; }
-    PHLWINDOW window() const override { return original->window(); }
-    CBox position() const override { return original->position(); }
-    void setPositionGlobal(const STargetBox &, uint8_t) override;
-    void recalc() override;
-    void assignToSpace(const SP<CSpace> &space, std::optional<Vector2D> focal = {}) override {
-        // Native group removal can happen outside our dispatcher. Hand back the
-        // real window target before it can enter any layout on its own.
-        auto w = window();
-        if (w && w->m_target.get() == this)
-            w->m_target = original;
-        original->assignToSpace(space, focal);
-        m_space = space;
-    }
-    void setSpaceGhost(const SP<CSpace> &space) override {
-        m_space = space;
-        m_ghostSpace = true;
-        original->setSpaceGhost(space);
-    }
-    bool floating() override { return original->floating(); }
-    void setFloating(bool value) override { original->setFloating(value); }
-    std::expected<SGeometryRequested, eGeometryFailure> desiredGeometry() override;
-    std::optional<Vector2D> minSize() override { return original->minSize(); }
-    std::optional<Vector2D> maxSize() override { return original->maxSize(); }
-    void damageEntire() override { original->damageEntire(); }
-    void warpPositionSize() override { original->warpPositionSize(); }
-    void onUpdateSpace() override { original->onUpdateSpace(); }
-};
+// A card is a native, locked CGroup whose target stays in the layout. After
+// Hyprland positions the group, a hook moves each member into its pane.
+CFunctionHook *positionHook = nullptr;
+using PositionFn = void (*)(Layout::CWindowGroupTarget *, const STargetBox &, uint8_t);
 struct Card {
     std::array<std::vector<PHLWINDOWREF>, 2> faces;
     std::array<PHLWINDOWREF, 2> focused;
     std::array<bool, 2> vertical{};
     std::array<std::vector<double>, 2> ratios;
-    std::map<uintptr_t, SP<PaneTarget>> targets;
     SP<CGroup> group;
     unsigned active = 0;
     bool unfolded = false, alive = true, adjusting = false, changing = false;
     CBox initial;
 
+    std::vector<PHLWINDOW> members() const {
+        std::vector<PHLWINDOW> out;
+        for (const auto &face : faces)
+            for (const auto &ref : face)
+                out.push_back(ref.lock());
+        return out;
+    }
     std::optional<unsigned> side(PHLWINDOW w) const {
         for (unsigned s = 0; s < 2; ++s)
             if (std::ranges::find(faces[s], w) != faces[s].end())
@@ -102,13 +74,11 @@ struct Card {
         return {};
     }
     bool valid() const {
-        if (!alive || !group || faces[0].empty() || faces[1].empty() || group->size() != targets.size())
+        if (!alive || !group || faces[0].empty() || faces[1].empty() || group->size() != members().size())
             return false;
-        for (const auto &[_, p] : targets) {
-            auto w = p->window();
-            if (!w || !w->m_isMapped || w->m_group != group || w->m_target != p)
+        for (const auto &w : members())
+            if (!w || !w->mapped() || w->grouping().group() != group)
                 return false;
-        }
         return true;
     }
     CBox faceBox(CBox box, unsigned s) const {
@@ -167,54 +137,43 @@ struct Card {
         if (!alive || changing)
             return;
         PHLWINDOW fullscreen;
-        for (const auto &[_, p] : targets)
-            if (auto w = p->window(); w && Fullscreen::controller()->isFullscreen(w))
+        for (const auto &w : members())
+            if (w && Fullscreen::controller()->isFullscreen(w))
                 fullscreen = w;
         for (unsigned s = 0; s < 2; ++s)
             for (auto &ref : faces[s])
                 if (auto w = ref.lock()) {
                     const bool shown = fullscreen ? w == fullscreen : unfolded || s == active;
-                    w->setInputBlocked(INPUT_BLOCK_GROUP_INACTIVE, !shown);
-                    w->alpha(WINDOW_ALPHA_LAYOUT)->setValueAndWarp(shown ? 1.F : 0.F);
+                    w->setInputBlocked(Desktop::View::FOCUS_BLOCK_GROUP_INACTIVE, !shown);
+                    w->presentation().alpha(WINDOW_ALPHA_LAYOUT)->setValueAndWarp(shown ? 1.F : 0.F);
                 }
     }
     void decos() {
-        for (const auto &[_, p] : targets)
-            if (auto w = p->window()) {
+        for (const auto &w : members())
+            if (w) {
                 std::vector<IHyprWindowDecoration *> remove;
-                for (const auto &d : w->m_windowDecorations)
+                for (const auto &d : w->presentation().decorations())
                     if (d->getDecorationType() == DECORATION_GROUPBAR)
                         remove.push_back(d.get());
                 for (auto d : remove)
-                    w->removeWindowDeco(d);
+                    w->presentation().removeDecoration(d);
             }
     }
     void refresh() {
         if (!alive || !group || changing)
             return;
-        group->m_target->recalc();
+        group->target()->recalc();
         visibility();
-        for (const auto &[_, p] : targets) {
-            p->warpPositionSize();
-            p->damageEntire();
-        }
-    }
-    void restore(PHLWINDOW w) {
-        auto it = targets.find(addr(w));
-        if (it == targets.end())
-            return;
-        if (w->m_target == it->second)
-            w->m_target = it->second->original;
-        targets.erase(it);
+        for (const auto &w : members())
+            if (w) {
+                w->windowTarget()->warpPositionSize();
+                w->windowTarget()->damageEntire();
+            }
     }
     void dissolve() {
         if (!alive)
             return;
         alive = false;
-        auto copy = targets;
-        for (auto &[_, p] : copy)
-            if (auto w = p->window())
-                restore(w);
         if (group && group->size()) {
             group->setLocked(false);
             group->destroy();
@@ -223,49 +182,43 @@ struct Card {
     }
     ~Card() { dissolve(); }
 };
-void PaneTarget::setPositionGlobal(const STargetBox &box, uint8_t flags) {
-    auto c = card.lock();
-    auto w = window();
-    if (!c || !c->alive || !w || w->m_group != c->group || c->changing) {
-        original->setPositionGlobal(box, flags);
-        return;
-    }
-    auto side = c->side(w);
-    if (!side)
+std::shared_ptr<Card> owner(const Layout::CWindowGroupTarget *target) {
+    for (auto &[_, c] : cards)
+        if (c->alive && c->group && c->group->target().get() == target)
+            return c;
+    return nullptr;
+}
+void onPositioned(Layout::CWindowGroupTarget *self, const STargetBox &box, uint8_t flags) {
+    auto c = owner(self);
+    if (!c || c->changing)
         return;
     CBox outer = box.visualBox.empty() ? box.logicalBox : box.visualBox;
-    if (floating() && !Fullscreen::controller()->isFullscreen(w) && !c->adjusting) {
+    bool fullscreen = false;
+    for (const auto &w : c->members())
+        fullscreen |= w && Fullscreen::controller()->isFullscreen(w);
+    if (self->floating() && !fullscreen && !c->adjusting) {
         auto min = c->minimum();
         if (outer.w < min.x || outer.h < min.y) {
+            // Re-enters this hook once with an allowed size.
             c->adjusting = true;
             outer.w = std::max(outer.w, min.x);
             outer.h = std::max(outer.h, min.y);
-            c->group->m_target->setPositionGlobal({.logicalBox = outer, .visualBox = {}}, flags);
+            self->setPositionGlobal({.logicalBox = outer, .visualBox = {}}, flags);
             c->adjusting = false;
             return;
         }
     }
-    auto index = std::ranges::find(c->faces[*side], w) - c->faces[*side].begin();
-    auto pane = Fullscreen::controller()->isFullscreen(w) ? outer : c->paneBox(outer, *side, index);
-    m_box = {pane, pane};
-    original->setPositionGlobal(m_box, flags);
+    for (unsigned s = 0; s < 2; ++s)
+        for (unsigned i = 0; i < c->faces[s].size(); ++i)
+            if (auto w = c->faces[s][i].lock()) {
+                auto pane = Fullscreen::controller()->isFullscreen(w) ? outer : c->paneBox(outer, s, i);
+                w->windowTarget()->setPositionGlobal({.logicalBox = pane, .visualBox = pane}, flags);
+            }
     c->visibility();
 }
-void PaneTarget::recalc() {
-    if (auto c = card.lock(); c && c->alive && c->group && !c->changing)
-        c->group->m_target->recalc();
-    else
-        original->recalc();
-}
-std::expected<SGeometryRequested, eGeometryFailure> PaneTarget::desiredGeometry() {
-    if (auto c = card.lock(); c && c->alive) {
-        auto box = c->group ? c->group->m_target->position() : c->initial;
-        if (box.w < 1 || box.h < 1)
-            box = c->initial;
-        return SGeometryRequested{box.size(), box.pos()};
-    }
-    auto box = original->position();
-    return SGeometryRequested{box.size().clamp({40, 40}), box.pos()};
+void hookedPosition(Layout::CWindowGroupTarget *self, const STargetBox &box, uint8_t flags) {
+    reinterpret_cast<PositionFn>(positionHook->m_original)(self, box, flags);
+    onPositioned(self, box, flags);
 }
 std::shared_ptr<Card> get(uint64_t id) {
     auto it = cards.find(id);
@@ -273,7 +226,7 @@ std::shared_ptr<Card> get(uint64_t id) {
 }
 bool supports(uintptr_t address) {
     auto w = resolve(address);
-    return w && !w->m_group && w->m_workspace && !w->m_workspace->m_isSpecialWorkspace &&
+    return positionHook && w && !w->grouping().group() && w->m_workspace && !w->onSpecialWorkspace() &&
            !Fullscreen::controller()->isFullscreen(w);
 }
 bool inspect(uint64_t id, ContainerSnapshot *out) {
@@ -283,7 +236,7 @@ bool inspect(uint64_t id, ContainerSnapshot *out) {
     *out = {};
     out->active = c->active;
     out->unfolded = c->unfolded;
-    auto box = c->group->m_target->position();
+    auto box = c->group->target()->position();
     out->x = box.x;
     out->y = box.y;
     out->width = box.w;
@@ -322,16 +275,16 @@ bool attach(uint64_t id, uintptr_t address, uint32_t side, bool vertical) {
     auto c = get(id);
     auto w = resolve(address);
     if (!c || !c->valid() || !supports(address) || side > 1 || c->faces[side].size() >= CONTAINER_MAX_PANES ||
-        w->m_workspace != c->group->m_target->workspace())
+        w->m_workspace != c->group->target()->workspace())
         return false;
     auto oldRatios = c->ratios[side];
     auto oldVertical = c->vertical[side];
     c->faces[side].push_back(w);
     c->ratios[side].assign(c->faces[side].size(), 1. / c->faces[side].size());
     c->vertical[side] = vertical;
-    auto box = c->group->m_target->position();
+    auto box = c->group->target()->position();
     auto min = c->minimum();
-    if (c->group->m_target->floating()) {
+    if (c->group->target()->floating()) {
         box.w = std::max(box.w, min.x);
         box.h = std::max(box.h, min.y);
     }
@@ -343,14 +296,11 @@ bool attach(uint64_t id, uintptr_t address, uint32_t side, bool vertical) {
     }
     c->changing = true;
     c->group->add(w);
-    auto p = PaneTarget::create(w->m_target, c);
-    c->targets[address] = p;
-    w->m_target = p;
     c->focused[side] = w;
     c->active = side;
     c->changing = false;
     c->decos();
-    c->group->m_target->setPositionGlobal({.logicalBox = box, .visualBox = {}});
+    c->group->target()->setPositionGlobal({.logicalBox = box, .visualBox = {}});
     c->refresh();
     select(id, side, true);
     return true;
@@ -364,7 +314,6 @@ bool release(uint64_t id, uintptr_t address) {
     if (c->faces[*s].size() == 1)
         return dissolve(id);
     c->changing = true;
-    c->restore(w);
     c->group->remove(w);
     std::erase(c->faces[*s], w);
     c->ratios[*s].assign(c->faces[*s].size(), 1. / c->faces[*s].size());
@@ -379,13 +328,15 @@ bool workspace(uint64_t id, uint32_t destination, bool follow) {
     auto c = get(id);
     if (!c || !c->valid())
         return false;
-    auto origin = c->group->m_target->workspace();
-    auto target = State::workspaceState()->query().id(destination).run();
-    if (!target)
-        target = State::workspaceState()->create(destination, origin->monitorID(), std::to_string(destination));
+    auto origin = c->group->target()->workspace();
+    const ::Workspace::SWorkspaceNumberedID number{destination};
+    auto target = State::workspaceState()->query().numbered(number).run();
+    auto front = c->focused[c->active].lock();
+    if (!target && front)
+        target = State::Workspace::state()->createNumbered(number, front->m_monitor.lock(), std::to_string(destination));
     if (!target)
         return false;
-    c->group->m_target->assignToSpace(target->m_space);
+    c->group->target()->assignToSpace(target->space());
     c->refresh();
     if (follow) {
         target->m_monitor->changeWorkspace(target);
@@ -398,11 +349,11 @@ bool move(uint64_t id, uint32_t dir) {
     auto c = get(id);
     if (!c || !c->valid())
         return false;
-    if (c->group->m_target->floating()) {
+    if (c->group->target()->floating()) {
         Vector2D delta{dir == 'r' ? 40. : dir == 'l' ? -40. : 0., dir == 'd' ? 40. : dir == 'u' ? -40. : 0.};
-        g_layoutManager->moveTarget(delta, c->group->m_target);
+        g_layoutManager->moveTarget(delta, c->group->target());
     } else
-        g_layoutManager->moveInDirection(c->group->m_target, std::string(1, char(dir)));
+        g_layoutManager->moveInDirection(c->group->target(), std::string(1, char(dir)));
     return true;
 }
 bool unfold(uint64_t id, bool value) {
@@ -410,9 +361,9 @@ bool unfold(uint64_t id, bool value) {
     if (!c || !c->valid())
         return false;
     c->unfolded = value;
-    auto box = c->group->m_target->position();
+    auto box = c->group->target()->position();
     auto min = c->minimum();
-    if (c->group->m_target->floating()) {
+    if (c->group->target()->floating()) {
         box.w = std::max(box.w, min.x);
         box.h = std::max(box.h, min.y);
     }
@@ -420,7 +371,7 @@ bool unfold(uint64_t id, bool value) {
         c->unfolded = !value;
         return false;
     }
-    c->group->m_target->setPositionGlobal({.logicalBox = box, .visualBox = {}});
+    c->group->target()->setPositionGlobal({.logicalBox = box, .visualBox = {}});
     c->refresh();
     return true;
 }
@@ -449,9 +400,9 @@ bool arrange(uint64_t id, uint32_t side, bool vertical, uint32_t count, const ui
     c->faces[side] = ordered;
     c->ratios[side] = weights;
     c->vertical[side] = vertical;
-    auto box = c->group->m_target->position();
+    auto box = c->group->target()->position();
     auto min = c->minimum();
-    if (c->group->m_target->floating()) {
+    if (c->group->target()->floating()) {
         box.w = std::max(box.w, min.x);
         box.h = std::max(box.h, min.y);
     }
@@ -461,7 +412,7 @@ bool arrange(uint64_t id, uint32_t side, bool vertical, uint32_t count, const ui
         c->vertical[side] = axis;
         return false;
     }
-    c->group->m_target->setPositionGlobal({.logicalBox = box, .visualBox = {}});
+    c->group->target()->setPositionGlobal({.logicalBox = box, .visualBox = {}});
     c->refresh();
     return true;
 }
@@ -481,7 +432,7 @@ bool edit(uint64_t id, uintptr_t address, ContainerEdit op) {
         c->faces[other].push_back(w);
         for (unsigned s = 0; s < 2; ++s)
             c->ratios[s].assign(c->faces[s].size(), 1. / c->faces[s].size());
-        if (!c->fits(c->group->m_target->position())) {
+        if (!c->fits(c->group->target()->position())) {
             c->faces = faces;
             c->ratios = ratios;
             return false;
@@ -510,16 +461,12 @@ bool replace(uint64_t id, uintptr_t outgoing, uintptr_t incoming) {
         return false;
     auto it = std::ranges::find(c->faces[*s], old);
     *it = next;
-    if (!c->fits(c->group->m_target->position())) {
+    if (!c->fits(c->group->target()->position())) {
         *it = old;
         return false;
     }
     c->changing = true;
     c->group->add(next);
-    auto p = PaneTarget::create(next->m_target, c);
-    c->targets[incoming] = p;
-    next->m_target = p;
-    c->restore(old);
     c->group->remove(old);
     if (c->focused[*s] == old)
         c->focused[*s] = next;
@@ -619,7 +566,7 @@ uint64_t create(const ContainerSnapshot &snapshot) {
         return 0;
     c->changing = true;
     auto front = c->faces[0][0].lock();
-    if (!front->m_isFloating)
+    if (!front->isFloating())
         g_layoutManager->changeFloatingMode(front->layoutTarget());
     c->group = CGroup::create({front});
     for (auto &face : c->faces)
@@ -627,16 +574,13 @@ uint64_t create(const ContainerSnapshot &snapshot) {
             auto w = ref.lock();
             if (w != front)
                 c->group->add(w);
-            auto p = PaneTarget::create(w->m_target, c);
-            c->targets[addr(w)] = p;
-            w->m_target = p;
         }
     c->group->setLocked(true);
     c->changing = false;
     c->decos();
     auto id = nextID++;
     cards.emplace(id, c);
-    c->group->m_target->setPositionGlobal({.logicalBox = c->initial, .visualBox = {}});
+    c->group->target()->setPositionGlobal({.logicalBox = c->initial, .visualBox = {}});
     select(id, c->active, true);
     c->refresh();
     return id;
@@ -649,7 +593,6 @@ void closing(PHLWINDOW w) {
                 return;
             }
             c->changing = true;
-            c->restore(w);
             c->group->remove(w, Math::DIRECTION_DEFAULT, CGroup::REMOVE_FROM_GROUP_REASON_UNMAP_WINDOW);
             std::erase(c->faces[*s], w);
             c->ratios[*s].assign(c->faces[*s].size(), 1. / c->faces[*s].size());
@@ -673,13 +616,33 @@ bool toggle(uint64_t id) {
     auto c = get(id);
     if (!c || !c->valid())
         return false;
-    g_layoutManager->changeFloatingMode(c->group->m_target);
+    // The native group asks its current window for a floating size, which is
+    // one pane. Keep the whole card's box instead.
+    const auto box = c->group->target()->position();
+    g_layoutManager->changeFloatingMode(c->group->target());
+    if (c->group->target()->floating() && box.w > 0 && box.h > 0)
+        g_layoutManager->setTargetGeom(box, c->group->target());
     c->refresh();
     return true;
 }
-void shutdown() {
+bool start(HANDLE handle) {
+    for (const auto &match : HyprlandAPI::findFunctionsByName(handle, "setPositionGlobal"))
+        if (match.demangled.starts_with("Layout::CWindowGroupTarget::setPositionGlobal(")) {
+            positionHook = HyprlandAPI::createFunctionHook(handle, match.address, reinterpret_cast<void *>(&hookedPosition));
+            if (positionHook && positionHook->hook())
+                return true;
+            positionHook = nullptr;
+            break;
+        }
+    return false;
+}
+bool available() { return positionHook != nullptr; }
+void shutdown(HANDLE handle) {
     for (auto &[_, c] : cards)
         c->dissolve();
     cards.clear();
+    if (positionHook)
+        HyprlandAPI::removeFunctionHook(handle, positionHook);
+    positionHook = nullptr;
 }
 } // namespace Hyprflip::FloatingCards

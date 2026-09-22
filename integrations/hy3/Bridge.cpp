@@ -7,9 +7,11 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <hyprland/src/desktop/view/window/WindowGroupMembership.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprland/src/state/workspace/State.hpp>
 #include <map>
 
 namespace {
@@ -23,14 +25,14 @@ uint64_t nextID = 1;
 
 PHLWINDOW window(uintptr_t id) {
     for (const auto &w : Desktop::windowState()->windows())
-        if (reinterpret_cast<uintptr_t>(w.get()) == id && w->m_isMapped)
+        if (reinterpret_cast<uintptr_t>(w.get()) == id && w->mapped())
             return w;
     return nullptr;
 }
 uintptr_t address(PHLWINDOW w) { return reinterpret_cast<uintptr_t>(w.get()); }
 Hy3Node *node(uintptr_t id) {
     auto w = window(id);
-    if (!w || w->m_isFloating || w->m_group)
+    if (!w || w->isFloating() || w->grouping().group())
         return nullptr;
     auto layout = hy3InstanceForWorkspace(w->m_workspace);
     return layout ? layout->getNodeFromWindow(w.get()) : nullptr;
@@ -80,7 +82,7 @@ bool inspect(uint64_t id, ContainerSnapshot *out) {
             if (!n.is_target() || !n.valid())
                 return false;
             auto w = n.as_window();
-            if (!w || !w->m_isMapped || w->m_isFloating || w->m_group ||
+            if (!w || !w->mapped() || w->isFloating() || w->grouping().group() ||
                 hy3InstanceForWorkspace(w->m_workspace) != r->Hy3Node::layout())
                 return false;
             result.windows[side][result.count[side]++] = address(w);
@@ -429,9 +431,10 @@ bool workspace(uint64_t id, uint32_t destination, bool follow) {
     auto r = root(id);
     auto layout = r->Hy3Node::layout();
     auto origin = layout->workspace();
-    auto target = State::workspaceState()->query().id(destination).run();
+    const ::Workspace::SWorkspaceNumberedID number{destination};
+    auto target = State::workspaceState()->query().numbered(number).run();
     if (!target)
-        target = State::workspaceState()->create(destination, origin->monitorID(), std::to_string(destination));
+        target = State::Workspace::state()->createNumbered(number, origin->m_monitor.lock(), std::to_string(destination));
     if (!target || !hy3InstanceForWorkspace(target))
         return false;
     if (target == origin)
@@ -452,7 +455,7 @@ bool workspace(uint64_t id, uint32_t destination, bool follow) {
             next = n->as_window();
         if (!next)
             for (const auto &w : Desktop::windowState()->windows())
-                if (w->m_workspace == origin && w->m_isMapped && !w->isHidden()) {
+                if (w->m_workspace == origin && w->mapped() && !w->isHidden()) {
                     next = w;
                     break;
                 }

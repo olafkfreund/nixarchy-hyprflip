@@ -322,6 +322,54 @@ try:
     assert all(not client(w)["hidden"] for w in (a, b))
     check("provider reload has fresh ownership and idle render-pass cleanup is safe")
 
+    # Floating cards are core-owned native groups. Hyprland positions the group;
+    # the core's group-position hook must then place every member in its pane.
+    config.write_text(original_config)
+    ctl("reload")
+    lua("hl.config({plugin={hyprflip={duration_ms=0,notifications=false}}})")
+    ctl("dispatch", "hl.dsp.focus({workspace=102})")
+    f1, f2, f3 = spawn("float-front"), spawn("float-left", "482d48"), spawn("float-right", "4b352b")
+    for address in (f1, f2, f3):
+        focus(address); ctl("dispatch", 'hl.dsp.window.float({action="float"})')
+    time.sleep(.5)
+    focus(f1); action("mark"); focus(f2); action("pair")
+    wait(lambda: len(status()["containers"]) == 1)
+    flip()
+    attach(f3, f2)
+    wait(lambda: card()["faces"] == [[f1], [f2, f3]])
+    assert card()["native_group"] and card()["floating"], card()
+
+    def box(address):
+        c = client(address)
+        return (*c["at"], *c["size"])
+
+    def panes_fill_card():
+        fx, fy, fw, fh = box(f1)
+        lx, ly, lw, lh = box(f2)
+        rx, ry, rw, rh = box(f3)
+        gap = rx - (lx + lw)
+        assert (lx, ly, lh) == (fx, fy, fh) and (ry, rh) == (fy, fh), (box(f1), box(f2), box(f3))
+        assert rx + rw == fx + fw and gap >= 0 and abs(lw - rw) <= 1, (box(f1), box(f2), box(f3), gap)
+        return fx, fy, fw, fh
+
+    x, y, w, h = panes_fill_card()
+    ctl("dispatch", f'hl.dsp.window.move({{x=60,y=40,relative=true,window="address:{f2}"}})')
+    wait(lambda: box(f1)[:2] == (x + 60, y + 40))
+    panes_fill_card()
+    ctl("dispatch", f'hl.dsp.window.resize({{x=120,y=80,relative=true,window="address:{f3}"}})')
+    wait(lambda: box(f1)[2:] == (w + 120, h + 80))
+    panes_fill_card()
+    flip()
+    # Core cards hide the inactive face by blocking input and zeroing alpha;
+    # unlike hy3 they do not set the window's hidden flag.
+    current = card()
+    for side, face in enumerate(current["faces"]):
+        for address in face:
+            c = client(address)
+            shown = side == current["active"]
+            assert c["visible"] == shown and c["acceptsInput"] == shown, (current, c)
+    check("floating card keeps its panes through native move, resize and flip")
+
     assert not ctl("configerrors").strip(), ctl("configerrors")
     (args.output / "report.json").write_text(json.dumps({"checks": checks}, indent=2))
     print(f"PASS {len(checks)} container checks", flush=True)

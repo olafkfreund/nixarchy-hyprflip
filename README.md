@@ -18,7 +18,7 @@ Actual desktop footage. The multi-app card in the video uses the optional
 [Shortcuts](#shortcuts) · [Transitions](#transitions) ·
 [Compatibility](#compatibility-and-limits) · [Documentation](#documentation)
 
-**Early release:** targets **Hyprland 0.56.2**, with matching development headers
+**Early release:** targets **Hyprland main `23118f9`**, with matching development headers
 and compiler ABI. The core is a native C++/GLES plugin. Multi-app cards use a
 separately built, pinned hy3 provider; the guided menus use **Omarchy 4**.
 
@@ -63,7 +63,7 @@ supported model; it is not a limit of hy3 itself.
 
 ## Install
 
-You need Hyprland **0.56.2**, its matching development headers, a matching
+You need Hyprland **main at `23118f9`**, its matching development headers, a matching
 C++26-capable compiler, CMake 3.25+, Ninja, pkg-config, Lua 5.5 and GLES libraries.
 The installer also needs Python 3 and an existing Hyprland Lua configuration.
 
@@ -248,7 +248,8 @@ The transition preference saved by the optional menu is reapplied on reload.
 
 ## Compatibility and limits
 
-- **Version pin:** Hyprland 0.56.2 only. Rebuild after compositor or ABI changes;
+- **Version pin:** Hyprland main `23118f9` only (0.56.2 is supported by
+  earlier releases). Rebuild after compositor or ABI changes;
   other versions need adaptation and testing.
 - **Containers:** one workspace, two faces, at most three apps in a row or
   column per face, tiled or floating. Nested flip cards and arbitrary pane trees

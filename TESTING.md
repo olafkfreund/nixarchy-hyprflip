@@ -1,5 +1,42 @@
 # Validation
 
+## Hyprland main port (2026-09-22)
+
+Validated on x86_64-linux against Hyprland `23118f9f7f24db7447069949c2df7fcd8ba380d0`,
+the build p620 runs. The flake's pinned package is the same derivation as the
+desktop's (nixpkgs `e554fab`), GCC 16.2.0, Lua 5.5. hy3 master `12a73ab0` plus
+`integrations/hy3/hyprland-main.patch`. The host compositor loaded nothing.
+
+- **`nix flake check` passes.** Both packages build, and the C++ core test
+  runs in the sandbox. Both module evaluations pass. aarch64-linux was not
+  built.
+- CMake reads the Hyprland commit from `version.h`. The 0.56.2 headers are
+  rejected with the mismatched commit in the error.
+- In `devenv shell`: Hyprland reports `23118f9`, `scripts/build-containers`
+  builds both libraries, container CTest passes, and all **142 Python unit
+  tests** pass.
+- With the Nix store libraries in fresh nested sessions on `23118f9`: all
+  **18 native** and all **14 container** checks pass. The 14 include one new
+  check: a floating card keeps its pane rectangles through native
+  `window.move`/`window.resize` and a flip. It fails when the pane hook is
+  stubbed out.
+- Unloading the core mid-flip on a floating card releases both windows
+  (mapped, ungrouped, accepting input). A reload reinstalls the hook, and
+  the card pairs and flips again.
+- **The functional checks alone were not enough.** The first transformer
+  adapter passed every state and geometry check but drew **no card** mid-flip,
+  because Hyprland main now passes transformers a window-sized canvas. Only the
+  captures showed it. After the render-path port, mid-flip captures show the
+  card correctly for a single pane, a two-pane face, and a rotated output at
+  scale 1.6.
+- **Environmental timeouts:** three runs timed out waiting for animation
+  progress while the nested window sat on the live desktop. In one, the host
+  retiled the nested output mid-run (1280×800 → 1255×1384), so Hyprflip
+  correctly cancelled the turn. Each passed when rerun in a fresh session
+  with a stable output. Nested checks on a busy host desktop can be disturbed
+  by host layout changes.
+- The live desktop was not loaded with the plugin by these runs.
+
 ## NixOS flake packages and modules (2026-09-22)
 
 Validated on x86_64-linux with the flake's pinned Hyprland 0.56.2

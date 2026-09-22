@@ -11,17 +11,17 @@
 }:
 let
   # Must match the revision checked by integrations/hy3/CMakeLists.txt.
-  rev = "42b7ed8fd9aefd3f36e5f617afd5071245c67853";
+  rev = "12a73ab0adddbc39f839da320dcc2b028769fc58";
   hy3Source = fetchFromGitHub {
     owner = "outfoxxed";
     repo = "hy3";
     inherit rev;
-    hash = "sha256-iK0vERuy5aXisDXm/bzcJP0dgaIot5MLPoVG62DjqO4=";
+    hash = "sha256-HCDDmRkDxQMWMIlTAjZ4vLIQ8e7VnHqBgaJ73u1ItnY=";
   };
 in
 hyprland.stdenv.mkDerivation {
   pname = "hy3";
-  version = "hl0.56.0.1-hyprflip";
+  version = "0-unstable-2026-08-23-hyprflip";
 
   # The bridge includes ../../src from Hyprflip's core.
   src = lib.fileset.toSource {

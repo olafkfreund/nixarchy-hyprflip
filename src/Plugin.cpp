@@ -6,7 +6,7 @@
 namespace {
 HANDLE handle = nullptr;
 std::unique_ptr<Hyprflip::Controller> controller;
-SP<SHyprCtlCommand> command;
+SP<IPC::Socket1::SCommand> command;
 int invoke(lua_State *L, const char *action) {
     auto result = controller->action(action);
     controller->notify(result);
@@ -120,7 +120,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE h) {
         if (!HyprlandAPI::addLuaFunction(handle, "hyprflip", name, fn))
             throw std::runtime_error("Hyprflip: could not register Lua function");
     command = HyprlandAPI::registerHyprCtlCommand(
-        handle, {.name = "hyprflip", .exact = false, .fn = [](eHyprCtlOutputFormat, std::string request) {
+        handle, {.name = "hyprflip", .match = IPC::Socket1::COMMAND_MATCH_PREFIX, .handler = [](const IPC::Socket1::SRequest &req) -> IPC::Socket1::SResponse {
+                     const std::string &request = req.command;
                      const auto space = request.find(' ');
                      const auto action = space == std::string::npos ? "status" : request.substr(space + 1);
                      if (action == "status")
