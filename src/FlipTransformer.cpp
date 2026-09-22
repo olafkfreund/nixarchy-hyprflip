@@ -2,8 +2,11 @@
 #include "Timeline.hpp"
 #include <array>
 #include <cmath>
-#include <hyprland/src/desktop/Workspace.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowEffectsController.hpp>
+#include <hyprland/src/desktop/view/window/WindowGroupMembership.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/output/MonitorResources.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -283,7 +286,12 @@ void FlipTransformer::preWindowRender(CSurfacePassElement::SRenderData *data) {
     }
 }
 
-SP<Render::IFramebuffer> FlipTransformer::transform(SP<Render::IFramebuffer> in) {
+// The card turns inside the window's own box, so the output box is unchanged.
+Render::SWindowTransformBuffer FlipTransformer::transform(const Render::SWindowTransformBuffer &in,
+                                                          const Render::SWindowTransformContext &) {
+    return {transformFramebuffer(in.framebuffer), in.box, true};
+}
+SP<Render::IFramebuffer> FlipTransformer::transformFramebuffer(SP<Render::IFramebuffer> in) {
     const auto w = m_window.lock();
     if (!w || !in || m_pose->failed)
         return in;
@@ -316,8 +324,8 @@ SP<Render::IFramebuffer> FlipTransformer::transform(SP<Render::IFramebuffer> in)
     }
     auto guard = g_pHyprRenderer->bindTempFB(out);
     CBox box = m_pose->containerBox.value_or(w->getFullWindowBoundingBox());
-    Vector2D offset = w->m_floatingOffset - monitor->m_position;
-    if (w->m_workspace && !w->m_pinned)
+    Vector2D offset = w->presentation().floatingOffset() - monitor->m_position;
+    if (w->m_workspace && !(w->m_state & Desktop::View::WINDOW_STATE_PINNED))
         offset += w->m_workspace->m_renderOffset->value();
     box.translate(offset).scale(monitor->m_scale);
     render.renderModif.applyToBox(box);

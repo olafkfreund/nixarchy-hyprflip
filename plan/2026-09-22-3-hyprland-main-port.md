@@ -84,6 +84,38 @@ Tracked as olafkfreund/nixarchy-hyprflip#3, on branch
   - runs only after nested verification passes, and with your explicit
     go-ahead.
 
+## Deviations during implementation
+
+- **Commit check (step 1):** CMake reads `GIT_COMMIT_HASH` from Hyprland's
+  installed `src/version.h` instead of matching the `hyprland.pc` path. It is
+  exact and works outside the Nix store. `HYPRFLIP_HYPRLAND_COMMIT` remains the
+  expected commit.
+- **Transformer removal (step 3):** `CWindowTransformerList` has no
+  remove-by-pointer. `FlipTransformer` gained `active()`/`deactivate()`, and
+  detaching deactivates it and calls `removeInactive()`.
+- **Eligibility mappings (step 4):**
+  - pinned → `m_state & WINDOW_STATE_PINNED`;
+  - `GROUP_DENY` → `grouping().rules()`;
+  - override-redirect/modal → `backend().traits()`;
+  - toplevel parent/modal child → `backend().parent()` / `traits().hasModalChild`;
+  - `popupsCount()` → `popupTreeSize()` (same "all children" semantics).
+
+  `backend().parent()` also covers X11 transients, so non-modal X11 dialogs
+  are now refused too. That is stricter, and it matches the existing
+  "not transient or modal" message.
+- **Workspace IDs:** the ID is now a variant, so comparisons use
+  `numberedID()`. New workspaces come from
+  `State::Workspace::state()->createNumbered`, on the card's focused window's
+  monitor.
+- **Hook lifetime (step 6):** installed by `FloatingCards::start` from the
+  `Controller` constructor, and removed in `FloatingCards::shutdown`, which the
+  controller destructor calls during `PLUGIN_EXIT` after cards are dissolved.
+  Without the hook, `supports()` returns false and the float action reports
+  that floating cards are unavailable.
+- **Float toggle:** Hyprland asks the group's current window for a floating
+  size, which is one pane. `toggle()` restores the card's previous box with
+  `setTargetGeom` when the card becomes floating.
+
 ## Steps
 
 1. **`CMakeLists.txt`:** use the bare `hyprland` module and add the commit check.

@@ -4,12 +4,17 @@
 #include <charconv>
 #include <dlfcn.h>
 #include <format>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Group.hpp>
 #include <hyprland/src/desktop/view/Popup.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowEffectsController.hpp>
+#include <hyprland/src/desktop/view/window/WindowGroupMembership.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+#include <hyprland/src/desktop/view/window/WindowBackend.hpp>
+#include <hyprland/src/render/transformer/TransformerList.hpp>
 #include <hyprland/src/layout/algorithm/Algorithm.hpp>
 #include <hyprland/src/layout/algorithm/TiledAlgorithm.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
@@ -57,6 +62,9 @@ bool sameBox(const CBox &a, const CBox &b) {
 
 Controller::Controller(HANDLE handle, Settings settings)
     : m_handle(handle), m_settings(std::move(settings)), m_shader(std::make_shared<FlipShader>()) {
+    if (!FloatingCards::start(handle))
+        HyprlandAPI::addNotification(handle, "[hyprflip] Floating cards are unavailable on this Hyprland build.",
+                                     CHyprColor(0xffed997b), 8000);
     // Only a watchdog for outputs that stop presenting (e.g. DPMS). Motion is
     // sampled by the output's render cycle, never by an independent timer.
     m_timer = makeShared<CEventLoopTimer>(std::nullopt, [this](SP<CEventLoopTimer>, void *) {
@@ -160,7 +168,7 @@ Controller::~Controller() {
             g->setLocked(pair.previousLock);
     }
     m_pairs.clear();
-    FloatingCards::shutdown();
+    FloatingCards::shutdown(m_handle);
     m_marked.reset();
     m_shader.reset();
 }
@@ -224,7 +232,7 @@ std::optional<Controller::State> Controller::state(const Pair &p) const {
                         found = w;
                         break;
                     }
-                if (!found || !found->m_isMapped)
+                if (!found || !found->mapped())
                     return std::nullopt;
                 result.faces[s].push_back(found);
                 result.ratios[s][i] = snapshot.ratios[s][i];
@@ -242,7 +250,7 @@ std::optional<Controller::State> Controller::state(const Pair &p) const {
     }
     auto a = p.windows[0].lock(), b = p.windows[1].lock();
     auto g = p.group.lock();
-    if (!a || !b || !a->m_isMapped || !b->m_isMapped || !g || g->size() != 2 || a->m_group != g || b->m_group != g ||
+    if (!a || !b || !a->mapped() || !b->mapped() || !g || g->size() != 2 || a->grouping().group() != g || b->grouping().group() != g ||
         !g->has(a) || !g->has(b))
         return std::nullopt;
     result.faces = {{{a}, {b}}};
@@ -260,7 +268,7 @@ bool Controller::inContainer() {
 void Controller::reconcile() {
     if (m_mutating)
         return;
-    if (m_marked && !m_marked->m_isMapped)
+    if (m_marked && !m_marked->mapped())
         m_marked.reset();
     for (auto &p : m_pairs)
         if (!valid(p)) {
@@ -339,7 +347,7 @@ void Controller::select(Pair &p, unsigned index, bool focus) {
     } else {
         p.group->setCurrent(p.windows[index].lock());
         for (unsigned i = 0; i < 2; ++i)
-            p.windows[i]->alpha(WINDOW_ALPHA_LAYOUT)->setValueAndWarp(i == index ? 1.F : 0.F);
+            p.windows[i]->presentation().alpha(WINDOW_ALPHA_LAYOUT)->setValueAndWarp(i == index ? 1.F : 0.F);
     }
     m_mutating = old;
 }
@@ -348,8 +356,10 @@ void Controller::detach() {
         return;
     for (unsigned i = 0; i < m_turn->windows.size(); ++i)
         if (auto w = m_turn->windows[i].lock()) {
-            auto *ours = m_turn->transformers[i];
-            std::erase_if(w->m_transformers, [ours](const auto &t) { return t.get() == ours; });
+            // The list only removes inactive transformers; retire ours, then prune.
+            if (auto *ours = static_cast<FlipTransformer *>(m_turn->transformers[i]))
+                ours->deactivate();
+            w->effects().transformers()->removeInactive();
             if (m_turn->suppressedGlass[i]) {
                 w->m_ruleApplicator->m_tagKeeper.applyTag("-hyprglass_disabled");
                 w->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_TAG);
@@ -378,20 +388,19 @@ bool Controller::inputBusy() const {
            PROTO::data->dndActive() || g_pInputManager->isConstrained() || g_pInputManager->hasHeldButtons();
 }
 std::string Controller::unavailable(PHLWINDOW w) const {
-    if (!w || !w->m_isMapped)
+    if (!w || !w->mapped())
         return "Focus a normal application window first.";
-    if (w->m_group)
+    if (w->grouping().group())
         return "Unpair or remove this window from its existing group first.";
-    if (w->m_pinned)
+    if (w->m_state & Desktop::View::WINDOW_STATE_PINNED)
         return "Unpin the window before pairing it.";
-    if (w->m_groupRules & GROUP_DENY)
+    if (w->grouping().rules() & Desktop::View::GROUP_DENY)
         return "This window's rules prohibit grouping.";
-    if (w->isX11OverrideRedirect() || w->isModal())
+    if (w->backend().traits().overrideRedirect || w->backend().traits().modal)
         return "Pair normal application windows, not transient or modal windows.";
     if (Fullscreen::controller()->isFullscreen(w))
         return "Leave fullscreen before creating a pair.";
-    if (w->m_xdgSurface && w->m_xdgSurface->m_toplevel &&
-        (w->m_xdgSurface->m_toplevel->m_parent || w->m_xdgSurface->m_toplevel->anyChildModal()))
+    if (w->backend().parent() || w->backend().traits().hasModalChild)
         return "Close the modal dialog before pairing.";
     return {};
 }
@@ -400,11 +409,11 @@ std::string Controller::animationFallback(PHLWINDOW a, PHLWINDOW b) const {
     if (!m_settings.enabled->value() || !*animations || m_settings.duration->value() == 0)
         return "Animations disabled";
     for (const auto &w : {a, b}) {
-        if (!w->m_monitor || !w->m_workspace || !w->m_workspace->m_visible)
+        if (!w->m_monitor || !w->m_workspace || !w->m_workspace->visible())
             return "Workspace not visible";
-        if (w->popupsCount() > 0)
+        if (w->popupTreeSize() > 0)
             return "Popup open";
-        if (w->m_xdgSurface && w->m_xdgSurface->m_toplevel && w->m_xdgSurface->m_toplevel->anyChildModal())
+        if (w->backend().traits().hasModalChild)
             return "Modal dialog open";
         const auto surface = w->resource();
         if (!surface || !surface->m_current.texture || surface->m_current.size.x < 1 || surface->m_current.size.y < 1)
@@ -445,17 +454,17 @@ Result Controller::pair() {
         return {false, "Finish the active grab or drag before pairing."};
     if (a->m_workspace != b->m_workspace)
         return {false, "Move both windows to the same workspace before pairing."};
-    if (a->m_isFloating != b->m_isFloating)
+    if (a->isFloating() != b->isFloating())
         return {false, "Both windows must be tiled, or both floating."};
     const auto minA = a->minSize().value_or(Vector2D{1, 1}), minB = b->minSize().value_or(Vector2D{1, 1});
     const auto maxA = a->maxSize().value_or(Vector2D{1e9, 1e9}), maxB = b->maxSize().value_or(Vector2D{1e9, 1e9});
     if (std::max(minA.x, minB.x) > std::min(maxA.x, maxB.x) || std::max(minA.y, minB.y) > std::min(maxA.y, maxB.y))
         return {false, "These windows have incompatible size limits."};
-    if (a->m_isFloating && !fits(b, a->size(IGeometric::GEOMETRIC_GOAL)))
+    if (a->isFloating() && !fits(b, a->size(IGeometric::GEOMETRIC_GOAL)))
         return {false, "Resize the first window so the second window fits before pairing."};
     finish();
     m_mutating = true;
-    if (auto api = a->m_isFloating ? FloatingCards::api() : provider(); api && api->supports(reinterpret_cast<uintptr_t>(a.get())) &&
+    if (auto api = a->isFloating() ? FloatingCards::api() : provider(); api && api->supports(reinterpret_cast<uintptr_t>(a.get())) &&
                                api->supports(reinterpret_cast<uintptr_t>(b.get()))) {
         const auto id = api->create(reinterpret_cast<uintptr_t>(a.get()), reinterpret_cast<uintptr_t>(b.get()));
         if (id) {
@@ -477,13 +486,13 @@ Result Controller::pair() {
         return {id != 0, id ? "Card created. Flip sides, or mark another window and attach it to a face."
                             : "Could not create the hy3 card."};
     }
-    if (!a->m_isFloating && a->m_workspace->m_space->algorithm()->tiledAlgo()->layoutName() == "hy3") {
+    if (!a->isFloating() && a->m_workspace->space()->algorithm()->tiledAlgo()->layoutName() == "hy3") {
         m_mutating = false;
         return {false,
                 "The hy3 container provider is unavailable or incompatible. Rebuild both experimental libraries."};
     }
     auto g = CGroup::create({a});
-    if (!b->canBeGroupedInto(g)) {
+    if (!b->grouping().canBeGroupedInto(g)) {
         g->destroy();
         m_mutating = false;
         return {false, "Hyprland's group locks or window rules prevent this pairing."};
@@ -515,19 +524,19 @@ Result Controller::adopt(const std::string &front, const std::string &back) {
         if (address(w) == quote(back))
             b = w;
     }
-    if (!a || !b || a == b || !a->m_isMapped || !b->m_isMapped)
+    if (!a || !b || a == b || !a->mapped() || !b->mapped())
         return {false, "Adopt requires two different live window addresses."};
     if (find(a) || find(b))
         return {false, "A window already belongs to a Hyprflip pair."};
-    auto g = a->m_group;
-    if (!g || b->m_group != g || g->size() != 2 || !g->has(a) || !g->has(b))
+    auto g = a->grouping().group();
+    if (!g || b->grouping().group() != g || g->size() != 2 || !g->has(a) || !g->has(b))
         return {false, "Adopt requires the two members of one existing native group."};
     m_pairs.push_back({m_nextID++, {a, b}, g, g->locked()});
     g->setLocked(true);
     return {true, "ok"};
 }
 bool Controller::canReturnPeek() const {
-    if (!m_peek || inputBusy() || !m_peek->workspace || !m_peek->workspace->m_visible || !m_peek->monitor ||
+    if (!m_peek || inputBusy() || !m_peek->workspace || !m_peek->workspace->visible() || !m_peek->monitor ||
         !m_peek->monitor->m_dpmsStatus)
         return false;
     const auto p = std::ranges::find_if(m_pairs, [this](const Pair &p) { return p.id == m_peek->pairID; });
@@ -538,7 +547,7 @@ bool Controller::canReturnPeek() const {
     for (const auto &ref : s->windows()) {
         auto w = ref.lock();
         if (!w || w->m_workspace != m_peek->workspace || w->m_monitor != m_peek->monitor ||
-            w->popupsCount() || Fullscreen::controller()->isFullscreen(w)) return false;
+            w->popupTreeSize() || Fullscreen::controller()->isFullscreen(w)) return false;
     }
     return true;
 }
@@ -656,12 +665,12 @@ Result Controller::flip(std::optional<Transition> preview) {
         // Its public opt-out tag prevents a stationary rectangle behind the
         // card. Preserve an existing opt-out; restore only tags we introduced.
         if (!w->m_ruleApplicator->m_tagKeeper.isTagged("hyprglass_disabled") &&
-            std::ranges::any_of(w->m_windowDecorations,
+            std::ranges::any_of(w->presentation().decorations(),
                                 [](const auto &deco) { return deco->getDisplayName() == "HyprGlass"; })) {
             m_turn->suppressedGlass[i] = w->m_ruleApplicator->m_tagKeeper.applyTag("+hyprglass_disabled");
             w->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_TAG);
         }
-        w->resetMotionBlur();
+        w->effects().resetMotionBlur();
     }
     select(*p, source);
     if (p->containerID)
@@ -695,9 +704,7 @@ Result Controller::flip(std::optional<Transition> preview) {
     }
     for (unsigned i = 0; i < m_turn->windows.size(); ++i) {
         auto w = m_turn->windows[i].lock();
-        auto t = makeUnique<FlipTransformer>(w, pose, m_shader);
-        m_turn->transformers[i] = t.get();
-        w->m_transformers.emplace_back(std::move(t));
+        m_turn->transformers[i] = w->effects().transformers()->emplace<FlipTransformer>(w, pose, m_shader);
     }
     m_lastFallback.clear();
     damage(*p);
@@ -744,7 +751,7 @@ Result Controller::attach(bool vertical) {
     for (const auto &member : s->windows())
         if (Fullscreen::controller()->isFullscreen(member.lock()))
             return {false, "Leave fullscreen before attaching to this container."};
-    if ((w->m_isFloating && p->providerEpoch != FloatingCards::EPOCH) || w->m_workspace != s->focused[s->active]->m_workspace)
+    if ((w->isFloating() && p->providerEpoch != FloatingCards::EPOCH) || w->m_workspace != s->focused[s->active]->m_workspace)
         return {false, "Tile the marked window on the same workspace before attaching it."};
     auto api = provider(p->providerEpoch);
     m_mutating = true;
@@ -790,9 +797,9 @@ Result Controller::replacePane(const std::string &arguments) {
         return {false, "The app to replace is no longer on this side."};
     if (auto error = unavailable(next); !error.empty())
         return {false, error};
-    if (find(next) || next->m_group)
+    if (find(next) || next->grouping().group())
         return {false, "The replacement already belongs to a card or group."};
-    if ((next->m_isFloating && p->providerEpoch != FloatingCards::EPOCH) || next->m_workspace != old->m_workspace)
+    if ((next->isFloating() && p->providerEpoch != FloatingCards::EPOCH) || next->m_workspace != old->m_workspace)
         return {false, "Tile the replacement on the card workspace first."};
     for (const auto &w : s->windows())
         if (Fullscreen::controller()->isFullscreen(w.lock()))
@@ -836,8 +843,8 @@ Result Controller::workspace(uint32_t destination, bool follow) {
     if (!s)
         return {false, "This card changed. Pair its windows again."};
     for (const auto& window : Desktop::windowState()->windows())
-        if (window->m_isMapped && window->m_isFloating && window->m_workspace &&
-            window->m_workspace->m_id == destination &&
+        if (window->mapped() && window->isFloating() && window->m_workspace &&
+            window->m_workspace->numberedID() == static_cast<Workspace::WorkspaceIDContainer>(destination) &&
             window->m_ruleApplicator->m_tagKeeper.isTagged("chillmode"))
             return {false, "Turn off Chill mode on workspace " + std::to_string(destination) +
                            " before moving the card there. The card stayed in place."};
@@ -862,7 +869,7 @@ bool Controller::protectsWorkspace(uint32_t workspace) const {
         if (!pair.containerID) continue;
         const auto card = state(pair);
         if (card && card->focused[0] && card->focused[0]->m_workspace &&
-            card->focused[0]->m_workspace->m_id == workspace) return true;
+            card->focused[0]->m_workspace->numberedID() == static_cast<Workspace::WorkspaceIDContainer>(workspace)) return true;
     }
     return false;
 }
@@ -1003,15 +1010,15 @@ void Controller::onFrame(PHLMONITOR monitor) {
         return;
     }
     if (current->m_monitor != m_turn->monitor || current->m_workspace != m_turn->workspace ||
-        !current->m_workspace->m_visible || !sameBox(s->geometry, m_turn->geometry) || current->popupsCount() > 0 ||
+        !current->m_workspace->visible() || !sameBox(s->geometry, m_turn->geometry) || current->popupTreeSize() > 0 ||
         inputBusy()) {
         finish();
         return;
     }
     for (unsigned i = 0; i < m_turn->windows.size(); ++i) {
         auto w = m_turn->windows[i].lock();
-        if (!w || !w->m_isMapped || w->m_monitor != m_turn->monitor || w->m_workspace != m_turn->workspace ||
-            !sameBox(w->geometricBox(IGeometric::GEOMETRIC_GOAL), m_turn->windowGeometry[i]) || w->popupsCount()) {
+        if (!w || !w->mapped() || w->m_monitor != m_turn->monitor || w->m_workspace != m_turn->workspace ||
+            !sameBox(w->geometricBox(IGeometric::GEOMETRIC_GOAL), m_turn->windowGeometry[i]) || w->popupTreeSize()) {
             finish();
             return;
         }
@@ -1068,6 +1075,10 @@ Result Controller::floating() {
             snapshot.windows[side][i] = reinterpret_cast<uintptr_t>(current->faces[side][i].get());
             snapshot.ratios[side][i] = current->ratios[side][i] > 0 ? current->ratios[side][i] : 1. / current->faces[side].size();
         }
+    }
+    if (!FloatingCards::available()) {
+        m_mutating = false;
+        return {false, "Floating cards are unavailable on this Hyprland build. The current card was kept."};
     }
     if (!FloatingCards::canCreate(snapshot)) {
         m_mutating = false;
@@ -1238,7 +1249,7 @@ std::string Controller::status() {
             }
             json += ']';
         }
-        json += "],\"native_group\":" + std::string(p.providerEpoch == FloatingCards::EPOCH ? "true" : "false") + ",\"floating\":" + std::string(s->focused[s->active]->m_isFloating ? "true" : "false") + ",\"layouts\":[";
+        json += "],\"native_group\":" + std::string(p.providerEpoch == FloatingCards::EPOCH ? "true" : "false") + ",\"floating\":" + std::string(s->focused[s->active]->isFloating() ? "true" : "false") + ",\"layouts\":[";
         for (unsigned side = 0; side < 2; ++side) {
             if (side) json += ',';
             json += "{\"axis\":" + quote(s->vertical[side] ? "vertical" : "horizontal") +

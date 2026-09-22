@@ -34,12 +34,17 @@ class FlipShader {
 class FlipTransformer final : public Render::IWindowTransformer {
   public:
     FlipTransformer(PHLWINDOW window, std::shared_ptr<Pose> pose, std::shared_ptr<FlipShader> shader);
-    SP<Render::IFramebuffer> transform(SP<Render::IFramebuffer> in) override;
+    Render::SWindowTransformBuffer transform(const Render::SWindowTransformBuffer &in,
+                                             const Render::SWindowTransformContext &context) override;
     void preWindowRender(CSurfacePassElement::SRenderData *data) override;
+    bool active() const override { return m_active; }
+    void deactivate() { m_active = false; }
 
   private:
     PHLWINDOWREF m_window;
     std::shared_ptr<Pose> m_pose;
     std::shared_ptr<FlipShader> m_shader;
+    bool m_active = true;
+    SP<Render::IFramebuffer> transformFramebuffer(SP<Render::IFramebuffer> in);
 };
 } // namespace Hyprflip

@@ -12,7 +12,7 @@
 namespace {
 using Clock = std::chrono::steady_clock;
 CHyprSignalListener listener, monitorListener;
-SP<SHyprCtlCommand> command;
+SP<IPC::Socket1::SCommand> command;
 Clock::time_point epoch, frameStart;
 std::string pending;
 PHLMONITORREF frameMonitor;
@@ -50,7 +50,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     });
     command = HyprlandAPI::registerHyprCtlCommand(
-        handle, {.name = "hf-motion-probe", .exact = false, .fn = [](eHyprCtlOutputFormat, std::string request) {
+        handle, {.name = "hf-motion-probe", .match = IPC::Socket1::COMMAND_MATCH_PREFIX, .handler = [](const IPC::Socket1::SRequest &req) -> IPC::Socket1::SResponse {
+                     const std::string &request = req.command;
                      if (request.ends_with(" start")) {
                          samples.clear();
                          pending.clear();
