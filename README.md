@@ -87,6 +87,7 @@ core and Lua bindings, reloads configuration and validates the result. Existing
 native pairs and customized settings are preserved during an update.
 
 Prefer hyprpm? Use the [hyprpm instructions](docs/INSTALL.md#hyprpm).
+On NixOS, use the [flake and its modules](docs/INSTALL.md#nixos-flake).
 For another configuration layout, use the
 [manual loading instructions](docs/INSTALL.md#manual-core-loading).
 Use one installation method for the core.

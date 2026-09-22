@@ -1,5 +1,33 @@
 # Validation
 
+## NixOS flake packages and modules (2026-09-22)
+
+Validated on x86_64-linux with the flake's pinned Hyprland 0.56.2
+(`efb50993780079460b0cbed1363e2166a2de1d9f`, nixpkgs `e72e4f2`, Glaze 7.2.0
+override). The host compositor remained on 0.56.0 and loaded nothing.
+
+- **`nix flake check` passes.** It builds `hyprflip` (whose check phase runs the
+  C++ core test) and `hy3`, and evaluates the NixOS module (`/etc/hyprflip`
+  entries) and Home Manager module (hyprflip loaded before hy3). The Home
+  Manager check stubs the two options it sets. It does not run Home Manager's
+  own `hl.plugin.load` rendering. aarch64-linux was not built.
+- The core links `liblua.so.5.5` and no Lua 5.4. Both libraries export
+  `pluginInit`; hy3 exports `hyprflip_hy3_bridge_v6`.
+- `integrations/hy3/CMakeLists.txt` gained an optional `HY3_SOURCE_REV` for
+  hy3 sources fetched without `.git`. `scripts/build-containers` still builds
+  unchanged, and a wrong `HY3_SOURCE_REV` fails with the existing revision error.
+- Using the Nix store libraries in fresh nested sessions from the #1 devenv
+  shell: all **18 native integration checks** and all **13 container checks**
+  passed.
+- Earlier attempts stalled (a session with no output, and a flip that never
+  passed its midpoint) while the host displays were off. The nested compositor
+  receives no frames then. Rerun with the displays on, the checks passed without
+  code changes.
+- A non-0.56.2 `hyprlandPackage` failing at CMake configure was not exercised;
+  it would require building another Hyprland from source.
+- All nested sessions were stopped. No nested windows or plugins remained on
+  the host.
+
 ## NixOS development environment (2026-09-22)
 
 Validated on x86_64-linux using the committed devenv inputs: Hyprland 0.56.2
