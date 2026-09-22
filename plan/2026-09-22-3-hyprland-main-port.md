@@ -135,6 +135,29 @@ Tracked as olafkfreund/nixarchy-hyprflip#3, on branch
   kept the old headers. `scripts/build-containers` now configures with
   `cmake --fresh`. Nix and fresh directories were never affected.
 
+- **Render path (step 5, found in step 11):** the one-line `transform`
+  adapter compiled and passed every state/geometry check, but mid-flip captures
+  showed **no card at all**. Hyprland main changed the transformer contract:
+  the input is a window-sized canvas at `in.box` (monitor-local pixels), not a
+  full-monitor texture, and the output must cover `context.outputBox`, with its
+  box returned. `FlipTransformer` now:
+  - declares `transformedExtents` = window box ∪ card box, so multi-pane cards
+    are not clipped;
+  - renders into an output canvas sized from `context.outputBox`, with
+    `boxToClip`/`outputToClip` projected in that canvas;
+  - samples through a new `boxToSource` matrix in the source texture's own
+    space (`in.box` for live content, the whole-monitor snapshot space for
+    snapshot modes);
+  - caches the snapshot composite together with the canvas box it covers.
+
+  Verified by inspecting captures: single-pane flip, two-pane card, and the
+  rotated output at scale 1.6.
+- **New container check (step 10):** core cards hide the inactive face with
+  input blocking and zero alpha, not the window `hidden` flag (true on 0.56.2
+  as well), so the check asserts `visible` and `acceptsInput` rather than
+  reusing the hy3-specific `visibility()` helper. Sanity: with the hook's pane
+  placement stubbed out, the check fails (all panes get the whole card box).
+
 ## Steps
 
 1. **`CMakeLists.txt`:** use the bare `hyprland` module and add the commit check.
