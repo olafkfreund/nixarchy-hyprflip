@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 3
 author: olafkfreund
 ---
@@ -59,15 +59,12 @@ documentation.
 - Do not change the desktop's Hyprland input as part of this task.
 - Follow the approved intent → spec → plan stages before implementing.
 
-## Open questions
+## Decisions (answered at intent review)
 
-1. **0.56.2 support.** Replace the 0.56.2 target with the main revision (one
-   supported target), or keep both through compile-time version switches (more
-   code to keep working)? The upstream project (nocstah/hyprflip) targets 0.56.2.
-2. **hy3.** Upstream hy3's newest commit (`12a73ab0`, 2026-08-23) predates the
-   desktop's Hyprland by a month. If it does not build either, should this task
-   carry our own patches to hy3, or ship the core first and defer multi-app cards?
-3. **Keeping in step.** Every `nix flake update` of the desktop moves Hyprland
-   main and may break the plugin API again. Should the desktop make the Hyprflip
-   input follow its own Hyprland input, so one lock controls both and a
-   mismatch fails the rebuild instead of the session?
+1. **0.56.2 support:** replaced. The single supported target is the Hyprland
+   main revision the desktop runs. No compile-time version switches.
+2. **hy3:** in scope. This task carries whatever patches hy3 needs to build and
+   pass the container checks on that revision.
+3. **Keeping in step:** the desktop's NixOS config makes its `hyprflip` input
+   follow its own `hyprland` input, so one lock controls both and a mismatch
+   fails the rebuild instead of the session.
