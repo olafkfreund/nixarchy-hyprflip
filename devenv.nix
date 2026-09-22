@@ -5,23 +5,8 @@
   ...
 }:
 let
-  # Upstream's lock supplies Glaze 8, but this compositor requires Glaze 7.
-  glaze = (pkgs.glaze.override { enableSSL = false; }).overrideAttrs {
-    version = "7.2.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "stephenberry";
-      repo = "glaze";
-      tag = "v7.2.0";
-      hash = "sha256-f3NVRi3SXKo42hn0WCw7JsOK3EkdOVJIcuzhPorKjFY=";
-    };
-    cmakeFlags = [
-      "-Dglaze_ENABLE_SSL=OFF"
-      "-Dglaze_DISABLE_SIMD_WHEN_SUPPORTED=ON"
-    ];
-  };
-  hyprland = inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.hyprland.override {
-    glaze-hyprland = glaze;
-  };
+  # The exact Hyprland main build p620 runs; no package overrides.
+  hyprland = inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.hyprland;
 in
 {
   stdenv = hyprland.stdenv;

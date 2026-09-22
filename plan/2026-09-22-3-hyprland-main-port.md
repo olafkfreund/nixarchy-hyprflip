@@ -126,6 +126,15 @@ Tracked as olafkfreund/nixarchy-hyprflip#3, on branch
 - **Bridge:** `Bridge.cpp` needed the same accessor and workspace-creation
   mappings as the core. The bridge ABI and exported symbol are unchanged.
 
+- **Glaze override removed (steps 8–9):** the flake's pinned Hyprland
+  evaluates to the same derivation the desktop runs (dev output
+  `h82jzys…-hyprland-0.56.0+date=2026-09-22_23118f9-dev`, nixpkgs `e554fab`), so
+  neither `flake.nix` nor `devenv.nix` needs the Glaze 7 override.
+- **Stale CMake caches (step 9):** upstream hy3 caches its `DEPS` pkg-config
+  lookup under an unchanged spec, so a build directory configured for 0.56.2
+  kept the old headers. `scripts/build-containers` now configures with
+  `cmake --fresh`. Nix and fresh directories were never affected.
+
 ## Steps
 
 1. **`CMakeLists.txt`:** use the bare `hyprland` module and add the commit check.

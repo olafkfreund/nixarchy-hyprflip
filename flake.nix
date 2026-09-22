@@ -2,8 +2,9 @@
   description = "Hyprflip: two Hyprland windows as the faces of a rotating card";
 
   inputs = {
-    # Same pin as devenv.yaml and hyprpm.toml (Hyprland v0.56.2).
-    hyprland.url = "github:hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f";
+    # Hyprland main at the commit p620 runs; same pin as devenv.yaml. Consumers
+    # should make this input follow their own `hyprland`.
+    hyprland.url = "github:hyprwm/Hyprland/23118f9f7f24db7447069949c2df7fcd8ba380d0";
     nixpkgs.follows = "hyprland/nixpkgs";
   };
 
@@ -21,28 +22,7 @@
       ];
       forAllSystems = f: lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
 
-      # Upstream's lock supplies Glaze 8, but this compositor requires Glaze 7.
-      # ponytail: duplicated in devenv.nix; move both to one overlay when the pin changes.
-      pinnedHyprland =
-        pkgs:
-        let
-          glaze = (pkgs.glaze.override { enableSSL = false; }).overrideAttrs {
-            version = "7.2.0";
-            src = pkgs.fetchFromGitHub {
-              owner = "stephenberry";
-              repo = "glaze";
-              tag = "v7.2.0";
-              hash = "sha256-f3NVRi3SXKo42hn0WCw7JsOK3EkdOVJIcuzhPorKjFY=";
-            };
-            cmakeFlags = [
-              "-Dglaze_ENABLE_SSL=OFF"
-              "-Dglaze_DISABLE_SIMD_WHEN_SUPPORTED=ON"
-            ];
-          };
-        in
-        hyprland.packages.${pkgs.stdenv.hostPlatform.system}.hyprland.override {
-          glaze-hyprland = glaze;
-        };
+      pinnedHyprland = pkgs: hyprland.packages.${pkgs.stdenv.hostPlatform.system}.hyprland;
     in
     {
       packages = forAllSystems (
