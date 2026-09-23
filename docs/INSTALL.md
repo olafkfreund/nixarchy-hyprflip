@@ -1,6 +1,6 @@
 # Install and update Hyprflip
 
-Hyprflip currently targets **Hyprland main at commit `23118f9`** (it still
+Hyprflip currently targets **Hyprland main at commit `e368c13`** (it still
 reports version 0.56.0), matched by commit. Choose native two-window pairs,
 or add the experimental hy3 provider for multi-app cards. The guided menus and
 saved-card library require **Omarchy 4**; the core and provider also expose
@@ -20,7 +20,7 @@ See [the panel interface](PANEL_API.md) for its behavior and compatibility.
 
 | Component | Requirements |
 | --- | --- |
-| Core | Hyprland `23118f9f7f24db7447069949c2df7fcd8ba380d0` and matching development headers; matching C++26-capable compiler; CMake 3.25+; Ninja; pkg-config; Lua 5.5; GLESv2 |
+| Core | Hyprland `e368c13c27a42a173b9e08fa0bf413f9f7073187` and matching development headers; matching C++26-capable compiler; CMake 3.25+; Ninja; pkg-config; Lua 5.5; GLESv2 |
 | Supplied installer | Python 3, `hyprctl`, a running Hyprland session and an existing `~/.config/hypr/hyprland.lua` |
 | Experimental provider | Git, Python 3, and the pinned hy3 dependencies: pixman, libdrm, Pango/PangoCairo, libinput, Wayland client and xkbcommon development files |
 | Guided menus and saved cards | Omarchy 4 with a responding `omarchy-shell`, Python 3, `notify-send` (libnotify), and `gio`/`gdbus` (GLib) |
@@ -57,7 +57,7 @@ python3 -m unittest discover -s tests -p '*_test.py'
 ctest --test-dir build/containers/core --output-on-failure
 ```
 
-The committed `devenv.lock` pins Hyprland `23118f9`, its development dependencies
+The committed `devenv.lock` pins Hyprland `e368c13`, its development dependencies
 and GCC 16.2.0. The environment also supplies Lua 5.5, GLES, Python's xkbcommon
 library lookup, foot and grim. First entry may download or build substantial
 dependencies. If a build directory was configured outside
@@ -154,7 +154,7 @@ installation through hyprpm does not contain Hyprflip's bridge.
 
 The flake builds the core and, optionally, the patched hy3 provider **against
 the Hyprland package you already run**. That package must be Hyprland commit
-`23118f9`; any other commit fails at build time instead of being rejected at
+`e368c13`; any other commit fails at build time instead of being rejected at
 load time.
 
 ```nix
@@ -199,7 +199,7 @@ hl.plugin.load("/etc/hyprflip/libhy3.so") -- only with containers
 
 `overlays.default` adds `hyprflip` and `hy3-hyprflip` built against
 `pkgs.hyprland`. `packages.<system>` are built against the flake's pinned
-Hyprland `23118f9` and are meant for testing.
+Hyprland `e368c13` and are meant for testing.
 
 Neither module writes settings or bindings. Take them from
 [examples/hyprflip.lua](../examples/hyprflip.lua), **omitting its
@@ -224,7 +224,7 @@ or overwrite a library file while that same file is mapped into Hyprland.
 ## Experimental multi-app cards
 
 The current bridge uses ABI **6** and hy3 master, commit
-`12a73ab0adddbc39f839da320dcc2b028769fc58`, ported to Hyprland `23118f9` by
+`12a73ab0adddbc39f839da320dcc2b028769fc58`, ported to Hyprland `e368c13` by
 `integrations/hy3/hyprland-main.patch`. `scripts/build-containers` fetches and
 checks that revision, then builds the provider and the matching Hyprflip core.
 It does not install libraries or modify the desktop.

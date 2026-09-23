@@ -7,7 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(HYPRLAND REQUIRED IMPORTED_TARGET hyprland)
 # Hyprland main still reports 0.56.0, so match the exact commit instead.
-set(HYPRFLIP_HYPRLAND_COMMIT "23118f9f7f24db7447069949c2df7fcd8ba380d0" CACHE STRING "Hyprland commit this plugin targets")
+set(HYPRFLIP_HYPRLAND_COMMIT "e368c13c27a42a173b9e08fa0bf413f9f7073187" CACHE STRING "Hyprland commit this plugin targets")
 find_file(HYPRLAND_VERSION_H hyprland/src/version.h PATHS ${HYPRLAND_INCLUDE_DIRS} NO_DEFAULT_PATH NO_CACHE)
 if(NOT HYPRLAND_VERSION_H)
   message(FATAL_ERROR "Cannot find hyprland/src/version.h to verify the Hyprland commit")

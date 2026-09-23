@@ -4,7 +4,7 @@
   inputs = {
     # Hyprland main at the commit p620 runs; same pin as devenv.yaml. Consumers
     # should make this input follow their own `hyprland`.
-    hyprland.url = "github:hyprwm/Hyprland/23118f9f7f24db7447069949c2df7fcd8ba380d0";
+    hyprland.url = "github:hyprwm/Hyprland/e368c13c27a42a173b9e08fa0bf413f9f7073187";
     nixpkgs.follows = "hyprland/nixpkgs";
   };
 
