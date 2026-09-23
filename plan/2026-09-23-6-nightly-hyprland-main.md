@@ -102,8 +102,8 @@ plugin through the flake.
       then fail unless the Hyprland rev in `devenv.lock` equals `new`. Also fail
       if `git status --porcelain -- . ':!flake.lock' ':!devenv.lock'` is
       non-empty.
-   3. `check` (only if `changed`): `nix flake check -L`.
-   4. `push` (only if `changed` and `github.ref == 'refs/heads/main'`):
+   3. `check` (every run; see the deviation below): `nix flake check -L`.
+   4. `push` (only if `github.ref == 'refs/heads/main'`; every run on `main`):
       `cachix push nixarchy $(nix build .#hyprflip .#hy3 --no-link
       --print-out-paths)`. The cache only ever receives builds that passed
       `check`. Pushing before `land` means a bump that lands is always cached.
@@ -127,6 +127,11 @@ plugin through the flake.
       good), so a merge blocked by future branch protection is not mistaken
       for a Hyprland break.
    Every `${{ }}` value reaches `run:` through `env:`, never inlined.
+   *Deviation (after merge):* `check` and `push` are no longer gated on
+   `changed`. PR #5 landed `e368c13` by hand, and the job then saw nothing new
+   and never cached it. Running them every night fixes any lock that lands
+   outside the job; once the paths are cached, the check is substituted and
+   `cachix push` skips them.
    A `workflow_dispatch` from a non-`main` ref is a dry run: bump, devenv
    and check only. `push` and `land` are gated on `main`.
    → verify: `actionlint .github/workflows/nightly.yml` is clean.

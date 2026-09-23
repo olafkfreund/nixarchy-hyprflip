@@ -69,14 +69,15 @@ jobs:
             exit 1
           fi
 
+      # check and push run even when Hyprland did not move, so a lock that landed
+      # another way (a manual bump) still reaches the cache; cached paths are skipped.
       - id: check
         name: Build both plugins, run CTest and evaluate the modules
-        if: steps.bump.outputs.changed == 'true'
         run: nix flake check -L
 
       - id: push
         name: Push the verified builds to Cachix
-        if: steps.bump.outputs.changed == 'true' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         run: |
           mapfile -t paths < <(nix build .#hyprflip .#hy3 --no-link --print-out-paths)
           printf '%s\n' "${paths[@]}"
