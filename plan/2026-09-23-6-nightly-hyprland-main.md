@@ -130,8 +130,10 @@ plugin through the flake.
    A `workflow_dispatch` from a non-`main` ref is a dry run: bump, devenv
    and check only. `push` and `land` are gated on `main`.
    → verify: `actionlint .github/workflows/nightly.yml` is clean.
-8. **Validation run (dry).** Push the branch, then run
-   `gh workflow run nightly.yml --ref ci/6-nightly-hyprland-main`. `push` and
+8. **Validation run (dry).** *Deviation:* `workflow_dispatch` only works once the
+   workflow is on the default branch, so a temporary
+   `push: branches: [ci/6-nightly-hyprland-main]` trigger runs it instead. That
+   trigger is removed in the next commit, before the PR merges. `push` and
    `land` are skipped because the ref is not `main`. Expected: `bump` moves the
    lock to today's `main` (`e368c13` or newer), then `check` either passes, or
    fails and `report` opens an issue. Either result proves those steps. `push`
