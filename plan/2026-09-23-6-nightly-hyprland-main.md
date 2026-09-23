@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 6
 spec: spec/2026-09-23-6-nightly-hyprland-main.md
 ---
