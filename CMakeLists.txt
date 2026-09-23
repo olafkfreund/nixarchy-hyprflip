@@ -6,8 +6,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(HYPRLAND REQUIRED IMPORTED_TARGET hyprland)
-# Hyprland main still reports 0.56.0, so match the exact commit instead.
-set(HYPRFLIP_HYPRLAND_COMMIT "23118f9f7f24db7447069949c2df7fcd8ba380d0" CACHE STRING "Hyprland commit this plugin targets")
+# Hyprland main still reports 0.56.0, so match the exact commit locked in flake.lock.
+set(HYPRFLIP_HYPRLAND_COMMIT_OVERRIDE "" CACHE STRING "Hyprland commit to target; empty reads flake.lock")
+set(HYPRFLIP_HYPRLAND_COMMIT "${HYPRFLIP_HYPRLAND_COMMIT_OVERRIDE}")
+if(NOT HYPRFLIP_HYPRLAND_COMMIT)
+  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/flake.lock")
+    message(FATAL_ERROR "flake.lock is missing; set -DHYPRFLIP_HYPRLAND_COMMIT_OVERRIDE=<Hyprland commit>")
+  endif()
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/flake.lock" HYPRFLIP_LOCK)
+  string(JSON HYPRFLIP_HYPRLAND_COMMIT GET "${HYPRFLIP_LOCK}" nodes hyprland locked rev)
+endif()
 find_file(HYPRLAND_VERSION_H hyprland/src/version.h PATHS ${HYPRLAND_INCLUDE_DIRS} NO_DEFAULT_PATH NO_CACHE)
 if(NOT HYPRLAND_VERSION_H)
   message(FATAL_ERROR "Cannot find hyprland/src/version.h to verify the Hyprland commit")

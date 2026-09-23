@@ -66,7 +66,9 @@ plugin through the flake.
 3. **`flake.nix`.** Set `hyprland.url = "github:hyprwm/Hyprland"` and update the
    comment. Add `nixConfig.extra-substituters` and
    `nixConfig.extra-trusted-public-keys` for the two caches. `flake.lock` is
-   untouched (the rev stays `23118f9`). → verify: `nix flake metadata` shows
+   untouched except that `original.rev` is dropped. Without that, Nix
+   re-locks to the tip of `main` because the input URL changed. The locked rev
+   stays `23118f9`, and the same applies to `devenv.lock` in step 4. → verify: `nix flake metadata` shows
    Hyprland `23118f9`; `nix flake check -L` passes.
 4. **`devenv.yaml`.** Set `url: github:hyprwm/Hyprland`; `devenv.lock` is
    untouched. → verify: `jq -r .nodes.hyprland.locked.rev devenv.lock` is

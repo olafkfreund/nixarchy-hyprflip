@@ -1,10 +1,23 @@
 {
   description = "Hyprflip: two Hyprland windows as the faces of a rotating card";
 
+  # Applies to direct `nix build`/`nix run` of this flake; NixOS consumers set
+  # these substituters in their own config (docs/INSTALL.md).
+  nixConfig = {
+    extra-substituters = [
+      "https://hyprland.cachix.org"
+      "https://nixarchy.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIITemDosxrE9/Kb+PfYvE="
+      "nixarchy.cachix.org-1:05JOuIlsQOWY2/5DQMq7JEA1hwlhgvmMWowMfka8mMM="
+    ];
+  };
+
   inputs = {
-    # Hyprland main at the commit p620 runs; same pin as devenv.yaml. Consumers
-    # should make this input follow their own `hyprland`.
-    hyprland.url = "github:hyprwm/Hyprland/23118f9f7f24db7447069949c2df7fcd8ba380d0";
+    # Hyprland main; flake.lock is the only pin (CMake reads it too). The
+    # nightly workflow moves it after `nix flake check` passes.
+    hyprland.url = "github:hyprwm/Hyprland";
     nixpkgs.follows = "hyprland/nixpkgs";
   };
 
