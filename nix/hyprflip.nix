@@ -16,6 +16,7 @@ hyprland.stdenv.mkDerivation {
     root = ../.;
     fileset = lib.fileset.unions [
       ../CMakeLists.txt
+      ../flake.lock
       ../src
       ../tests/core_test.cpp
       ../tests/motion_probe.cpp

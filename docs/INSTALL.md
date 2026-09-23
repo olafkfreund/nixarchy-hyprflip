@@ -1,8 +1,14 @@
 # Install and update Hyprflip
 
-Hyprflip currently targets **Hyprland main at commit `e368c13`** (it still
-reports version 0.56.0), matched by commit. Choose native two-window pairs,
-or add the experimental hy3 provider for multi-app cards. The guided menus and
+Hyprflip targets **the Hyprland main commit locked in `flake.lock`** (main still
+reports version 0.56.0), matched by commit. A nightly job moves that lock to the
+newest Hyprland main once the plugin builds and passes its checks. Print it with:
+
+```sh
+nix flake metadata --json | jq -r .locks.nodes.hyprland.locked.rev
+```
+
+Choose native two-window pairs, or add the experimental hy3 provider for multi-app cards. The guided menus and
 saved-card library require **Omarchy 4**; the core and provider also expose
 commands for custom configurations.
 
@@ -20,7 +26,7 @@ See [the panel interface](PANEL_API.md) for its behavior and compatibility.
 
 | Component | Requirements |
 | --- | --- |
-| Core | Hyprland `e368c13c27a42a173b9e08fa0bf413f9f7073187` and matching development headers; matching C++26-capable compiler; CMake 3.25+; Ninja; pkg-config; Lua 5.5; GLESv2 |
+| Core | Hyprland at the commit locked in `flake.lock`, with matching development headers; matching C++26-capable compiler; CMake 3.25+; Ninja; pkg-config; Lua 5.5; GLESv2 |
 | Supplied installer | Python 3, `hyprctl`, a running Hyprland session and an existing `~/.config/hypr/hyprland.lua` |
 | Experimental provider | Git, Python 3, and the pinned hy3 dependencies: pixman, libdrm, Pango/PangoCairo, libinput, Wayland client and xkbcommon development files |
 | Guided menus and saved cards | Omarchy 4 with a responding `omarchy-shell`, Python 3, `notify-send` (libnotify), and `gio`/`gdbus` (GLib) |
@@ -57,7 +63,7 @@ python3 -m unittest discover -s tests -p '*_test.py'
 ctest --test-dir build/containers/core --output-on-failure
 ```
 
-The committed `devenv.lock` pins Hyprland `e368c13`, its development dependencies
+The committed `devenv.lock` pins the same Hyprland commit as `flake.lock`, its development dependencies
 and GCC 16.2.0. The environment also supplies Lua 5.5, GLES, Python's xkbcommon
 library lookup, foot and grim. First entry may download or build substantial
 dependencies. If a build directory was configured outside
@@ -153,9 +159,10 @@ installation through hyprpm does not contain Hyprflip's bridge.
 ## NixOS flake
 
 The flake builds the core and, optionally, the patched hy3 provider **against
-the Hyprland package you already run**. That package must be Hyprland commit
-`e368c13`; any other commit fails at build time instead of being rejected at
-load time.
+the Hyprland package you already run**. That package must be the Hyprland
+commit locked in this flake's `flake.lock`; any other commit fails at build time
+instead of being rejected at load time. To skip the local build, see
+[prebuilt plugins](#nixos-with-prebuilt-plugins-cachix).
 
 ```nix
 # flake.nix
@@ -165,8 +172,8 @@ inputs.hyprflip = {
 };
 ```
 
-With `follows`, updating your Hyprland input moves the plugin's pin with it. If
-Hyprland main changes the plugin API, the rebuild fails rather than the session.
+With `follows`, both inputs must lock the same Hyprland commit. If they differ,
+or Hyprland main changes the plugin API, the rebuild fails rather than the session.
 
 With Home Manager managing Hyprland, the module adds both libraries to
 `wayland.windowManager.hyprland.plugins`, which loads them in order:
@@ -198,12 +205,65 @@ hl.plugin.load("/etc/hyprflip/libhy3.so") -- only with containers
 ```
 
 `overlays.default` adds `hyprflip` and `hy3-hyprflip` built against
-`pkgs.hyprland`. `packages.<system>` are built against the flake's pinned
-Hyprland `e368c13` and are meant for testing.
+`pkgs.hyprland`. `packages.<system>` are built against the flake's locked
+Hyprland; they are what the nightly job publishes to Cachix.
 
 Neither module writes settings or bindings. Take them from
 [examples/hyprflip.lua](../examples/hyprflip.lua), **omitting its
 `hl.plugin.load(...)` line**. Use one installation method for the core.
+
+## NixOS with prebuilt plugins (Cachix)
+
+Every night a GitHub workflow moves `flake.lock` to the newest Hyprland main,
+runs `nix flake check`, and only when it passes pushes `hyprflip` and `hy3` to
+`nixarchy.cachix.org` and merges the lock bump. A cached plugin matches only the
+exact Hyprland it was built against, so take the compositor from this flake too
+(no `follows`):
+
+```nix
+# flake.nix
+inputs.hyprflip.url = "github:olafkfreund/nixarchy-hyprflip"; # no follows
+
+# NixOS configuration (system = "x86_64-linux")
+{ inputs, ... }:
+let
+  hyprland = inputs.hyprflip.inputs.hyprland.packages.x86_64-linux;
+  hyprflip = inputs.hyprflip.packages.x86_64-linux;
+in
+{
+  imports = [ inputs.hyprflip.nixosModules.default ];
+
+  nix.settings = {
+    extra-substituters = [
+      "https://hyprland.cachix.org"
+      "https://nixarchy.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIITemDosxrE9/Kb+PfYvE="
+      "nixarchy.cachix.org-1:05JOuIlsQOWY2/5DQMq7JEA1hwlhgvmMWowMfka8mMM="
+    ];
+  };
+
+  programs.hyprland = {
+    enable = true;
+    package = hyprland.hyprland;
+    portalPackage = hyprland.xdg-desktop-portal-hyprland;
+  };
+
+  programs.hyprflip = {
+    enable = true;
+    containers.enable = true; # optional
+    package = hyprflip.hyprflip; # the cached builds; the module default
+    hy3Package = hyprflip.hy3; #   rebuilds against your pkgs instead
+  };
+}
+```
+
+Add the substituters and rebuild once before enabling the plugins, so the
+first plugin build is already substituted. After that,
+`nix flake update hyprflip` moves the compositor and plugins together to the
+last good night. Only `x86_64-linux` is built. Load the libraries from
+`/etc/hyprflip` as above.
 
 ## Manual core loading
 
@@ -224,7 +284,7 @@ or overwrite a library file while that same file is mapped into Hyprland.
 ## Experimental multi-app cards
 
 The current bridge uses ABI **6** and hy3 master, commit
-`12a73ab0adddbc39f839da320dcc2b028769fc58`, ported to Hyprland `e368c13` by
+`12a73ab0adddbc39f839da320dcc2b028769fc58`, ported to Hyprland main by
 `integrations/hy3/hyprland-main.patch`. `scripts/build-containers` fetches and
 checks that revision, then builds the provider and the matching Hyprflip core.
 It does not install libraries or modify the desktop.

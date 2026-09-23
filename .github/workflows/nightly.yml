@@ -1,0 +1,142 @@
+name: Nightly Hyprland main
+
+# Moves flake.lock and devenv.lock to the newest Hyprland main. Only when
+# `nix flake check` passes are hyprflip and hy3 pushed to nixarchy.cachix.org
+# and the bump merged, so main always names a combination that builds and tests.
+# A dispatch from any ref but main is a dry run: bump, devenv, check only.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency: nightly
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  BRANCH: bot/nightly-hyprland
+  LABEL: nightly-failure
+
+jobs:
+  nightly:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      # ponytail: skipPush, then an explicit push after the checks; the daemon
+      # would publish each path as it builds, including on a failing night.
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: nixarchy
+          extraPullNames: hyprland
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+
+      - id: bump
+        name: Lock the newest Hyprland main
+        run: |
+          old=$(jq -r .nodes.hyprland.locked.rev flake.lock)
+          nix flake update hyprland
+          new=$(jq -r .nodes.hyprland.locked.rev flake.lock)
+          echo "Hyprland $old -> $new"
+          {
+            echo "old=$old"
+            echo "new=$new"
+            echo "changed=$([ "$old" != "$new" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: devenv
+        name: Lock the same Hyprland for devenv
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          NEW: ${{ steps.bump.outputs.new }}
+        run: |
+          nix run nixpkgs#devenv -- update hyprland
+          got=$(jq -r .nodes.hyprland.locked.rev devenv.lock)
+          if [ "$got" != "$NEW" ]; then
+            echo "devenv.lock has Hyprland $got, flake.lock has $NEW" >&2
+            exit 1
+          fi
+          stray=$(git status --porcelain -- . ':!flake.lock' ':!devenv.lock')
+          if [ -n "$stray" ]; then
+            echo "Unexpected changes besides the locks:" >&2
+            echo "$stray" >&2
+            exit 1
+          fi
+
+      - id: check
+        name: Build both plugins, run CTest and evaluate the modules
+        if: steps.bump.outputs.changed == 'true'
+        run: nix flake check -L
+
+      - id: push
+        name: Push the verified builds to Cachix
+        if: steps.bump.outputs.changed == 'true' && github.ref == 'refs/heads/main'
+        run: |
+          mapfile -t paths < <(nix build .#hyprflip .#hy3 --no-link --print-out-paths)
+          printf '%s\n' "${paths[@]}"
+          cachix push nixarchy "${paths[@]}"
+
+      - id: land
+        name: Merge the lock bump
+        if: steps.bump.outputs.changed == 'true' && github.ref == 'refs/heads/main'
+        env:
+          OLD: ${{ steps.bump.outputs.old }}
+          NEW: ${{ steps.bump.outputs.new }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git commit -m "build: nightly Hyprland main ${NEW:0:7}" -- flake.lock devenv.lock
+          git push -f origin "HEAD:$BRANCH"
+          body="Hyprland [${OLD:0:7}...${NEW:0:7}](https://github.com/hyprwm/Hyprland/compare/$OLD...$NEW). \`nix flake check\` passed and the builds are on nixarchy.cachix.org: $RUN"
+          pr=$(gh pr list --head "$BRANCH" --state open --json url -q '.[0].url')
+          if [ -z "$pr" ]; then
+            pr=$(gh pr create --base main --head "$BRANCH" --title "build: nightly Hyprland main ${NEW:0:7}" --body "$body")
+          fi
+          gh pr merge "$pr" --squash --delete-branch
+          for n in $(gh issue list --label "$LABEL" --state open --json number -q '.[].number'); do
+            gh issue close "$n" --comment "Fixed: $pr merged Hyprland ${NEW:0:7}."
+          done
+
+      - id: report
+        name: Report the failure
+        if: failure()
+        env:
+          NEW: ${{ steps.bump.outputs.new || 'unknown' }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BUMP: ${{ steps.bump.outcome }}
+          DEVENV: ${{ steps.devenv.outcome }}
+          CHECK: ${{ steps.check.outcome }}
+          PUSH: ${{ steps.push.outcome }}
+          LAND: ${{ steps.land.outcome }}
+        run: |
+          gh label create "$LABEL" --color B60205 --description "Nightly Hyprland main build failed" --force
+          if [ "$LAND" = failure ]; then
+            title="Nightly landing failed"
+          else
+            title="Nightly build failed against Hyprland main"
+          fi
+          body="$title at Hyprland [${NEW:0:7}](https://github.com/hyprwm/Hyprland/commit/$NEW).
+
+          | step | outcome |
+          | --- | --- |
+          | bump | $BUMP |
+          | devenv | $DEVENV |
+          | check | $CHECK |
+          | push | $PUSH |
+          | land | $LAND |
+
+          main and the cache still point at the last good night. Run: $RUN"
+          open=$(gh issue list --label "$LABEL" --state open --json number -q '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --label "$LABEL" --title "$title" --body "$body"
+          fi
