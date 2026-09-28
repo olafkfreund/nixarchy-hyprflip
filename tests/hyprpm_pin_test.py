@@ -48,6 +48,12 @@ class HyprpmPinTest(unittest.TestCase):
         self.assertEqual(self.pins(), [RELEASE, [NEW, PLUGIN]])
         self.assertIn("# comments survive", self.manifest.read_text())
 
+    def test_keeps_the_file_mode(self):
+        self.manifest.write_text(MANIFEST)
+        self.manifest.chmod(0o644)
+        subprocess.run([sys.executable, SCRIPT, "--file", self.manifest, OLD, NEW, PLUGIN], check=True, capture_output=True)
+        self.assertEqual(self.manifest.stat().st_mode & 0o777, 0o644)
+
     def test_appends_when_no_pin_matches_old(self):
         first_run = MANIFEST.replace(f'    ["{OLD}", "178885bd77a0f77765a31a21a75c6e14393a6718"],\n', "")
         result = self.pin(first_run, OLD, NEW, PLUGIN)

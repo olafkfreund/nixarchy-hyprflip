@@ -54,6 +54,7 @@ def main():
         sys.exit(f"{args.file}: {error}")
     with tempfile.NamedTemporaryFile("w", dir=args.file.parent, delete=False) as temporary:
         temporary.write(text)
+    os.chmod(temporary.name, args.file.stat().st_mode & 0o777)
     os.replace(temporary.name, args.file)
     print(f"hyprpm pin: {args.new} -> {args.plugin}")
 
