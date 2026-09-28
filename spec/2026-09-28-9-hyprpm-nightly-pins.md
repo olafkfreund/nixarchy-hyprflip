@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 9
 intent: intent/2026-09-28-9-hyprpm-nightly-pins.md
 ---
