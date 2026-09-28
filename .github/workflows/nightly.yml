@@ -94,9 +94,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -C "$BRANCH"
-          git commit -m "build: nightly Hyprland main ${NEW:0:7}" -- flake.lock devenv.lock
+          # hyprpm: map NEW to the main commit the check step just built against it (#9)
+          python3 scripts/hyprpm_pin.py "$OLD" "$NEW" "$GITHUB_SHA"
+          git commit -m "build: nightly Hyprland main ${NEW:0:7}" -- flake.lock devenv.lock hyprpm.toml
           git push -f origin "HEAD:$BRANCH"
-          body="Hyprland [${OLD:0:7}...${NEW:0:7}](https://github.com/hyprwm/Hyprland/compare/$OLD...$NEW). \`nix flake check\` passed and the builds are on nixarchy.cachix.org: $RUN"
+          body="Hyprland [${OLD:0:7}...${NEW:0:7}](https://github.com/hyprwm/Hyprland/compare/$OLD...$NEW). \`nix flake check\` passed and the builds are on nixarchy.cachix.org: $RUN
+
+          hyprpm pin: \`${NEW:0:7}\` → \`${GITHUB_SHA:0:7}\`"
           pr=$(gh pr list --head "$BRANCH" --state open --json url -q '.[0].url')
           if [ -z "$pr" ]; then
             pr=$(gh pr create --base main --head "$BRANCH" --title "build: nightly Hyprland main ${NEW:0:7}" --body "$body")
