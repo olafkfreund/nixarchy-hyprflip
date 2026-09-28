@@ -136,14 +136,24 @@ both floating. Leave fullscreen while creating the pair.
 
 ## hyprpm
 
-This alternative installs the core for **native pairs**. Its manifest maps the
-supported Hyprland commit to a matching implementation commit.
+This alternative installs the core for **native pairs**. Its manifest maps a
+supported Hyprland commit to a matching implementation commit. Pick the
+repository for the Hyprland you run:
 
 ```sh
+# Hyprland main: pinned to the commit in this repository's flake.lock,
+# moved every night the build passes against a newer main.
+hyprpm add https://github.com/olafkfreund/nixarchy-hyprflip
+
+# Hyprland 0.56.2 release: the original project carries the newer 0.56.2 build.
 hyprpm add https://github.com/nocstah/hyprflip
+
 hyprpm enable hyprflip
 hyprpm reload
 ```
+
+On a Hyprland commit with no pin, hyprpm builds the repository head, which may
+not match your compositor's plugin API.
 
 Add the settings and bindings from [examples/hyprflip.lua](../examples/hyprflip.lua)
 to your Lua configuration, **omitting its `hl.plugin.load(...)` line**: hyprpm
